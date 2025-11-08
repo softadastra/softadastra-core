@@ -10,8 +10,6 @@ use Ivi\Http\HtmlResponse;
 
 final class HomeController extends Controller
 {
-    private string $path = 'welcome.';
-
     public function home(Request $request): HtmlResponse
     {
         return $this->view('welcome.home', [

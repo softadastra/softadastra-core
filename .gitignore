@@ -70,3 +70,6 @@ gitleaks-report.json
 node_modules/
 dist/
 build/
+# Security / Gitleaks
+gitleaks*.json
+gitleaks*.sarif

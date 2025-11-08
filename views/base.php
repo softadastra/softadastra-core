@@ -3,7 +3,14 @@
 
 <head>
     <meta charset="utf-8">
-    <title><?= isset($title) ? htmlspecialchars($title) : 'ivi.php' ?></title>
+    <title>
+        <?php
+        $safeTitle = isset($title) && $title !== null && $title !== ''
+            ? (string)$title
+            : 'ivi.php';
+        echo htmlspecialchars($safeTitle, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        ?>
+    </title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <?= $meta ?? '' ?>

@@ -289,3 +289,76 @@ if (!function_exists('docs_path')) {
         return $path !== '' ? $base . DIRECTORY_SEPARATOR . ltrim($path, DIRECTORY_SEPARATOR) : $base;
     }
 }
+
+if (!function_exists('migrations_add_path')) {
+    function migrations_add_path(string $path): void
+    {
+        if (function_exists('migrations')) {
+            $mgr = migrations();
+            if (is_object($mgr) && method_exists($mgr, 'addPath')) {
+                $mgr->addPath($path);
+                return;
+            }
+        }
+        $GLOBALS['__ivi_migration_paths'] ??= [];
+        if (!in_array($path, $GLOBALS['__ivi_migration_paths'], true)) {
+            $GLOBALS['__ivi_migration_paths'][] = $path;
+        }
+    }
+}
+
+if (!function_exists('configv')) {
+    /**
+     * Safe config getter — fonctionne avec ou sans le helper config().
+     *
+     * @param string $key     Clé du paramètre (ex: "market.title")
+     * @param mixed  $default Valeur par défaut si non trouvée
+     * @return mixed
+     */
+    function configv(string $key, mixed $default = null): mixed
+    {
+        // Si ton framework a un helper config()
+        if (function_exists('config')) {
+            try {
+                return config($key, $default);
+            } catch (\Throwable) {
+                // En cas d'erreur (clé manquante, etc.)
+            }
+        }
+
+        // Fallback global pour les modules (système Softadastra)
+        $segments = explode('.', $key);
+        $value = $GLOBALS['__ivi_config'] ?? [];
+
+        foreach ($segments as $seg) {
+            if (is_array($value) && array_key_exists($seg, $value)) {
+                $value = $value[$seg];
+            } else {
+                return $default;
+            }
+        }
+
+        return $value ?? $default;
+    }
+}
+
+if (!function_exists('cfg')) {
+    function cfg(string $key, mixed $default = null): mixed
+    {
+        return configv($key, $default);
+    }
+}
+
+if (!function_exists('e')) {
+    function e(?string $v): string
+    {
+        return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+if (!function_exists('config_set')) {
+    function config_set(string $key, array $value): void
+    {
+        $GLOBALS['__ivi_config'][$key] = $value;
+    }
+}

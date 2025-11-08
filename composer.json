@@ -16,10 +16,13 @@
       "Ivi\\Config\\": "config/",
       "Ivi\\Support\\": "support/",
       "Ivi\\Router\\": "router/",
-      "App\\": "src/"
+      "App\\": "src/",
+      "Softadastra\\Modules\\": "src/Modules/",
+      "Market\\Core\\": "modules/Market/Core/src/"
     },
     "files": [
-      "core/Support/Helpers.php"
+      "core/Support/Helpers.php",
+      "support/ide-stubs.php"
     ]
   },
   "bin": [

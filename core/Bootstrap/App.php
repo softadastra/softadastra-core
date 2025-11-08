@@ -8,6 +8,8 @@ use Ivi\Http\Request;
 use Ivi\Core\Router\Router;
 use Ivi\Core\Debug\Logger;
 use Ivi\Core\Exceptions\ExceptionHandler;
+use Softadastra\Modules\ModuleRegistry;
+
 
 /**
  * Class App
@@ -129,8 +131,38 @@ final class App
         $this->router = new Router($this->resolver);
         $this->kernel = new Kernel($this->exceptions);
 
+        $this->loadModules();
+
         // 6) Load application routes (comme avant)
         $this->registerRoutes();
+    }
+
+    /**
+     * Charge et démarre les modules déclarés dans config/modules.php
+     * - register() pour merger config / binder services
+     * - boot() pour routes / vues / migrations
+     */
+    private function loadModules(): void
+    {
+        $configFile  = $this->baseDir . '/config/modules.php';
+        $modulesCfg  = is_file($configFile) ? require $configFile : ['modules' => []];
+        $modulesList = $modulesCfg['modules'] ?? [];
+
+        $registry = new ModuleRegistry();
+
+        foreach ($modulesList as $slug) {
+            $moduleFile = $this->baseDir . "/modules/{$slug}/Module.php";
+            if (is_file($moduleFile)) {
+                /** @var \Softadastra\Modules\ModuleContract $module */
+                $module = require $moduleFile; // retourne une instance
+                $registry->add($module);
+            }
+        }
+
+        // 1) config/bind
+        $registry->registerAll();
+        // 2) routes/views/migrations avec TON router
+        $registry->bootAll($this->router);
     }
 
     /**
