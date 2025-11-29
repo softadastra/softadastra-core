@@ -79,4 +79,5 @@ gitleaks*.sarif
 # public/modules
 public/modules/*
 !public/modules/.gitignore
-
+build-ninja/
+build/

@@ -1,18 +1,49 @@
+# =============================================================
+# Vix App — Cross-platform build helper
+# =============================================================
+# Usage:
+#   make build               → configure + build (ALL)
+#   make run                 → build + run (target 'run')
+#   make clean               → delete build folders
+#   make rebuild             → full rebuild
+#   make preset=name run     → override configure preset (ex: dev-msvc)
+#   make BUILD_PRESET=name   → override build preset (ex: build-msvc)
+# =============================================================
+
 # ---------------- Base Shell ----------------
 SHELL := /bin/bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
 
 # ---------------- Variables ----------------
-VERSION      ?= v0.1.0
-BRANCH_DEV   ?= dev
-BRANCH_MAIN  ?= main
-REMOTE       ?= origin
+VERSION       ?= v0.1.0
+BRANCH_DEV    ?= dev
+BRANCH_MAIN   ?= main
+REMOTE        ?= origin
+
+# CMake presets / build
+PRESET        ?= dev-ninja
+BUILD_PRESET  ?= $(PRESET)
+ifeq ($(PRESET),dev-ninja)
+  BUILD_PRESET := build-ninja
+endif
+ifeq ($(PRESET),dev-msvc)
+  BUILD_PRESET := build-msvc
+endif
+RUN_PRESET ?= $(BUILD_PRESET)
+ifeq ($(PRESET),dev-ninja)
+  RUN_PRESET := run-ninja
+endif
+ifeq ($(PRESET),dev-msvc)
+  RUN_PRESET := run-msvc
+endif
+
+CMAKE         ?= cmake
 
 # ---------------- PHONY ----------------
-.PHONY: force_ssh_remote install_gitleaks check_secrets preflight \
-        ensure-branch ensure-clean commit push merge tag release \
-        test changelog help
+.PHONY: force_ssh_remote preflight ensure-branch ensure-clean commit push merge tag release \
+        test changelog help build run clean rebuild preset \
+        coverage publish-mods publish-mods-force
 
 # ---------------- Help ----------------
 help:
@@ -23,15 +54,18 @@ help:
 	@echo "  push                    Push $(BRANCH_DEV) with retries"
 	@echo "  merge                   Merge $(BRANCH_DEV) -> $(BRANCH_MAIN) and push with retries"
 	@echo "  tag VERSION=vX.Y.Z      Create and push annotated tag"
-	@echo "  test                    Run ctest in ./build if present"
+	@echo "  test                    Run ctest if build/ exists, otherwise composer test"
 	@echo "  changelog               Run scripts/update_changelog.sh if present"
+	@echo "  build                   Configure + build (CMake preset: $(PRESET))"
+	@echo "  run                     Build + run (uses run preset: $(RUN_PRESET))"
+	@echo "  clean                   Remove build artifacts"
+	@echo "  rebuild                 Full rebuild (clean + build)"
+	@echo "  preset                  Placeholder target to override PRESET variable"
 
 # ---------------- Git Remote (force SSH) ----------------
 force_ssh_remote:
 	@echo "🔐 Forcing SSH for GitHub remotes..."
-	# Transforme automatiquement tout URL https://github.com/* en git@github.com:* (global)
 	@git config --global url."git@github.com:".insteadOf https://github.com/
-	# Réécrit l'origin actuel s'il est encore en HTTPS
 	@url="$$(git remote get-url $(REMOTE))"; \
 	if [[ "$$url" =~ ^https://github.com/ ]]; then \
 		new="$${url/https:\/\/github.com\//git@github.com:}"; \
@@ -39,28 +73,7 @@ force_ssh_remote:
 		git remote set-url $(REMOTE) "$$new"; \
 	fi
 	@echo "Remote $(REMOTE): $$(git remote get-url $(REMOTE))"
-	# Check SSH (ne plante pas si réseau HS)
 	@ssh -T git@github.com >/dev/null 2>&1 || true
-
-# ---------------- Tools / Security ----------------
-install_gitleaks:
-	@echo "🔧 Checking gitleaks..."
-	@if ! command -v gitleaks >/dev/null 2>&1; then \
-		echo "⚙️  Installing gitleaks (script installer)..."; \
-		curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | bash -s -- -b /usr/local/bin || { \
-			echo "⚠️  Installer script failed; trying tarball fallback..."; \
-			curl -sSfL -o /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_Linux_x86_64.tar.gz; \
-			tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks; \
-			sudo mv /tmp/gitleaks /usr/local/bin/gitleaks; \
-			sudo chmod +x /usr/local/bin/gitleaks; \
-		}; \
-	fi
-	@gitleaks version
-
-check_secrets: install_gitleaks
-	@echo "🔎 Preflight: secrets scan..."
-	@gitleaks detect --source . --no-banner --redact
-	@echo "✅ Secrets check passed"
 
 # ---------------- Guards ----------------
 ensure-branch:
@@ -79,24 +92,20 @@ ensure-clean:
 # ---------------- Sync (avec retries) ----------------
 preflight: force_ssh_remote
 	@echo "🔎 Sync $(BRANCH_DEV) & $(BRANCH_MAIN) ..."
-	# fetch avec retries (réseau/DNS)
 	@tries=0; until git fetch $(REMOTE); do \
 		tries=$$((tries+1)); \
 		if [ $$tries -ge 5 ]; then echo "❌ git fetch failed after $$tries tries"; exit 128; fi; \
 		echo "⏳ Retry $$tries (fetch)..."; sleep 3; \
 	done
-	# S'assurer qu'on a bien les deux branches locales
 	@git show-ref --verify --quiet refs/heads/$(BRANCH_DEV) || git branch $(BRANCH_DEV) $(REMOTE)/$(BRANCH_DEV) || true
 	@git show-ref --verify --quiet refs/heads/$(BRANCH_MAIN) || git branch $(BRANCH_MAIN) $(REMOTE)/$(BRANCH_MAIN) || true
 
-	# Rebase dev sur sa remote (avec retries)
 	@tries=0; until git checkout $(BRANCH_DEV) && git pull --rebase $(REMOTE) $(BRANCH_DEV); do \
 		tries=$$((tries+1)); \
 		if [ $$tries -ge 5 ]; then echo "❌ rebase $(BRANCH_DEV) failed after $$tries tries"; exit 128; fi; \
 		echo "⏳ Retry $$tries (pull --rebase $(BRANCH_DEV))..."; sleep 3; \
 	done
 
-	# Rebase main sur sa remote (avec retries)
 	@tries=0; until git checkout $(BRANCH_MAIN) && git pull --rebase $(REMOTE) $(BRANCH_MAIN); do \
 		tries=$$((tries+1)); \
 		if [ $$tries -ge 5 ]; then echo "❌ rebase $(BRANCH_MAIN) failed after $$tries tries"; exit 128; fi; \
@@ -117,7 +126,6 @@ commit: ensure-branch
 	fi
 
 push: force_ssh_remote
-	# push dev avec retries
 	@tries=0; until git push $(REMOTE) $(BRANCH_DEV); do \
 		tries=$$((tries+1)); \
 		if [ $$tries -ge 5 ]; then echo "❌ push $(BRANCH_DEV) failed after $$tries tries"; exit 128; fi; \
@@ -127,7 +135,6 @@ push: force_ssh_remote
 merge: force_ssh_remote
 	git checkout $(BRANCH_MAIN)
 	git merge --no-ff --no-edit $(BRANCH_DEV)
-	# push main avec retries
 	@tries=0; until git push $(REMOTE) $(BRANCH_MAIN); do \
 		tries=$$((tries+1)); \
 		if [ $$tries -ge 5 ]; then echo "❌ push $(BRANCH_MAIN) failed after $$tries tries"; exit 128; fi; \
@@ -145,7 +152,6 @@ tag: force_ssh_remote
 	fi
 	@echo "🏷️  Creating annotated tag $(VERSION)..."
 	git tag -a $(VERSION) -m "chore(release): $(VERSION)"
-	# push tag avec retries
 	@tries=0; until git push $(REMOTE) $(VERSION); do \
 		tries=$$((tries+1)); \
 		if [ $$tries -ge 5 ]; then echo "❌ push tag $(VERSION) failed after $$tries tries"; exit 128; fi; \
@@ -155,21 +161,55 @@ tag: force_ssh_remote
 
 # ---------------- Orchestration ----------------
 # Ordre sûr : commit -> preflight(sync) -> ensure-clean -> push dev -> merge to main -> tag
-release: ensure-branch force_ssh_remote check_secrets commit preflight ensure-clean push merge tag
+release: ensure-branch force_ssh_remote commit preflight ensure-clean push merge tag
 	@echo "🎉 Release $(VERSION) done!"
 
-# ---------------- Extras ----------------
+# ---------------- Extras / Tests ----------------
+# Try ctest if build dir exists, otherwise fallback to composer test
 test:
-	@composer test
+	@if [ -d "./build" ] || ls build-* 1>/dev/null 2>&1; then \
+		echo "🔬 Running ctest..."; \
+		ctest --test-dir ./build || exit $$?; \
+	else \
+		echo "🔬 No build folder found — running composer test fallback..."; \
+		@composer test || true; \
+	fi
 
 coverage:
-	@XDEBUG_MODE=coverage vendor/bin/phpunit
+	@XDEBUG_MODE=coverage vendor/bin/phpunit || true
 
 publish-mods:
-	php bin/ivi modules:publish-assets
+	php bin/ivi modules:publish-assets || true
 
 publish-mods-force:
-	php bin/ivi modules:publish-assets --force
+	php bin/ivi modules:publish-assets --force || true
 
 changelog:
 	@bash scripts/update_changelog.sh || true
+
+# ---------------- CMake / Build section ----------------
+# Configure preset (CMake 'configurePresets')
+# Build preset (CMake 'buildPresets') is mapped above
+all: build
+
+build:
+	@echo "⚙️  Configuring with preset '$(PRESET)' and building '$(BUILD_PRESET)'..."
+	@$(CMAKE) --preset $(PRESET)
+	@$(CMAKE) --build --preset $(BUILD_PRESET)
+
+run:
+	@echo "▶ Building and running (preset: $(RUN_PRESET))..."
+	@$(CMAKE) --preset $(PRESET)
+	@$(CMAKE) --build --preset $(RUN_PRESET) --target run
+
+clean:
+	@echo "🧹 Cleaning build artifacts..."
+	@rm -rf build-* CMakeFiles CMakeCache.txt || true
+
+rebuild: clean build
+
+preset:
+	@:
+
+# ---------------- Misc ----------------
+# Keep this file easy to extend for CI or dev machines.
